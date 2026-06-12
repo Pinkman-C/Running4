@@ -1056,10 +1056,33 @@ async function ensureValidToken() {
   return data.access_token;
 }
 
-function connectStrava() {
+// Domaine canonique de prod : l'OAuth Strava passe toujours par lui, même si
+// l'app est ouverte via une URL de preview Vercel → une seule valeur à déclarer
+// comme Authorization Callback Domain côté Strava.
+let canonicalHostCache = null;
+async function getCanonicalHost() {
+  if (canonicalHostCache) return canonicalHostCache;
+  try {
+    const r = await fetch('/api/config');
+    const data = await r.json();
+    canonicalHostCache = String(data.canonical_host || '').trim() || window.location.hostname;
+  } catch {
+    canonicalHostCache = window.location.hostname;
+  }
+  return canonicalHostCache;
+}
+
+async function fillCanonicalHost() {
+  const host = await getCanonicalHost();
+  document.querySelectorAll('.cb-domain').forEach(el => el.textContent = host);
+}
+
+async function connectStrava() {
+  const host = await getCanonicalHost();
+  const proto = /^(localhost|127\.)/.test(host) ? 'http' : 'https';
   const params = new URLSearchParams({
     client_id:      STRAVA_CLIENT_ID,
-    redirect_uri:   window.location.origin + '/api/callback',
+    redirect_uri:   `${proto}://${host}/api/callback`,
     response_type:  'code',
     approval_prompt:'auto',
     scope:          'activity:read_all',
@@ -1895,13 +1918,15 @@ function renderProfile() {
         <button class="ghost-action" type="button" style="width:100%" onclick="disconnectStrava()">Déconnecter Strava</button>
       </div>` : ''}
       <div class="profile-note" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">
-        <b>Config OAuth</b> — sur <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener">strava.com/settings/api</a>,
-        le champ « Domaine de rappel autorisé » (Authorization Callback Domain) doit contenir exactement :
-        <b>${escapeHtml(window.location.hostname)}</b> (sans https:// ni chemin).
+        <b>Config OAuth</b> — sur <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener">strava.com/settings/api</a>
+        (app dont l’ID client est <b>${STRAVA_CLIENT_ID}</b>), le champ « Domaine de rappel autorisé »
+        (Authorization Callback Domain) doit contenir exactement :
+        <b class="cb-domain">${escapeHtml(window.location.hostname)}</b> (sans https:// ni chemin).
         Sinon Strava renvoie l’erreur <i>redirect_uri invalid</i>.
       </div>
     </div>`;
   document.getElementById('content').innerHTML = html;
+  fillCanonicalHost();
 }
 
 function saveProfile(e) {
@@ -2262,10 +2287,12 @@ async function renderActivities() {
         <div style="color:#888;margin-bottom:20px">Connecte ton compte Strava pour voir tes sorties en direct.</div>
         <button onclick="connectStrava()" style="background:#FC4C02;color:#fff;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-size:1rem;font-weight:600">Connecter Strava</button>
         <div style="color:#999;font-size:11px;margin-top:18px;line-height:1.5">
-          Erreur « redirect_uri invalid » sur Strava ? Déclare <b>${escapeHtml(window.location.hostname)}</b><br>
-          comme domaine de callback sur <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener">strava.com/settings/api</a>.
+          Erreur « redirect_uri invalid » sur Strava ? Déclare <b class="cb-domain">${escapeHtml(window.location.hostname)}</b><br>
+          comme domaine de callback sur <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener">strava.com/settings/api</a>
+          (app ID client ${STRAVA_CLIENT_ID}).
         </div>
       </div>`;
+    fillCanonicalHost();
     return;
   }
 
