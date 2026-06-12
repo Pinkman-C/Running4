@@ -1102,6 +1102,7 @@ const AUTH_ERROR_MESSAGES = {
   access_denied: 'Connexion Strava annulée.',
   no_code: 'Connexion Strava incomplète — aucun code reçu, réessaie.',
   token_exchange_failed: 'Strava a refusé l’échange de tokens. Vérifie STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET côté Vercel.',
+  missing_server_config: 'Variables STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET absentes côté Vercel : ajoute-les dans Settings → Environment Variables, puis redéploie.',
   server_error: 'Erreur serveur pendant la connexion Strava. Réessaie dans un instant.',
 };
 
@@ -1120,9 +1121,11 @@ function handleOAuthCallback() {
     showToast('Strava connecté — synchronisation en cours…');
   } else if (query.has('auth_error')) {
     const code = query.get('auth_error');
-    console.error('Auth Strava error:', code);
+    const detail = query.get('auth_error_detail');
+    console.error('Auth Strava error:', code, detail || '');
     window.history.replaceState({}, document.title, window.location.pathname);
-    showToast(AUTH_ERROR_MESSAGES[code] || `Connexion Strava échouée (${escapeHtml(code)}).`, 'error', 9000);
+    const base = AUTH_ERROR_MESSAGES[code] || `Connexion Strava échouée (${escapeHtml(code)}).`;
+    showToast(base + (detail ? `<br>Détail Strava : <b>${escapeHtml(detail)}</b>` : ''), 'error', 12000);
   }
 }
 

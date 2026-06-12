@@ -11,6 +11,9 @@ module.exports = async function handler(req, res) {
   if (!refresh_token) {
     return res.status(400).json({ error: 'refresh_token requis' });
   }
+  if (!process.env.STRAVA_CLIENT_ID || !process.env.STRAVA_CLIENT_SECRET) {
+    return res.status(500).json({ error: 'missing_server_config' });
+  }
 
   try {
     const response = await fetch('https://www.strava.com/oauth/token', {
