@@ -2384,13 +2384,71 @@ function showTab(tab) {
 // ─────────────────────────────────────────────────────────────
 // INIT
 // ─────────────────────────────────────────────────────────────
-handleOAuthCallback();   // capture les tokens si retour OAuth
-refreshHeader();
-setInterval(refreshHeader, 60000);
-renderDashboard();
-// Auto-sync Strava au démarrage si connecté
-if (isStravaConnected()) {
-  syncStrava();
+// ─────────────────────────────────────────────────────────────
+// PROTECTION MOT DE PASSE
+// ─────────────────────────────────────────────────────────────
+const AUTH_KEY = 'coach-running-authed';
+
+function isAppAuthed() {
+  return localStorage.getItem(AUTH_KEY) === '1';
+}
+
+function showLoginScreen() {
+  document.body.innerHTML = `
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f8f9fa;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
+      <div style="background:#fff;border-radius:16px;padding:40px;width:320px;box-shadow:0 4px 24px rgba(0,0,0,0.08);text-align:center">
+        <div style="font-size:2rem;margin-bottom:8px">🏃</div>
+        <div style="font-size:1.3rem;font-weight:700;margin-bottom:4px">Coach Running</div>
+        <div style="color:#888;font-size:0.9rem;margin-bottom:28px">Porto Marathon 2026</div>
+        <input type="password" id="pwd-input" placeholder="Mot de passe"
+          style="width:100%;box-sizing:border-box;padding:12px 14px;border:1.5px solid #e5e7eb;border-radius:8px;font-size:1rem;margin-bottom:12px;outline:none"
+          onkeydown="if(event.key==='Enter') checkPassword()" />
+        <button onclick="checkPassword()"
+          style="width:100%;padding:12px;background:#2563EB;color:#fff;border:none;border-radius:8px;font-size:1rem;font-weight:600;cursor:pointer">
+          Accéder
+        </button>
+        <div id="pwd-error" style="color:#DC2626;font-size:0.85rem;margin-top:10px;min-height:18px"></div>
+      </div>
+    </div>`;
+  setTimeout(() => document.getElementById('pwd-input')?.focus(), 100);
+}
+
+async function checkPassword() {
+  const input = document.getElementById('pwd-input');
+  const errEl = document.getElementById('pwd-error');
+  const pwd = input?.value || '';
+  if (!pwd) return;
+
+  try {
+    const r = await fetch('/api/auth-check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pwd }),
+    });
+    const data = await r.json();
+    if (data.ok) {
+      localStorage.setItem(AUTH_KEY, '1');
+      location.reload();
+    } else {
+      if (errEl) errEl.textContent = 'Mot de passe incorrect.';
+      if (input) { input.value = ''; input.focus(); }
+    }
+  } catch {
+    if (errEl) errEl.textContent = 'Erreur réseau, réessaie.';
+  }
+}
+
+// ─── DÉMARRAGE ───────────────────────────────────────────────
+if (!isAppAuthed()) {
+  showLoginScreen();
+} else {
+  handleOAuthCallback();   // capture les tokens si retour OAuth
+  refreshHeader();
+  setInterval(refreshHeader, 60000);
+  renderDashboard();
+  if (isStravaConnected()) {
+    syncStrava();
+  }
 }
 </script>
 </body>
