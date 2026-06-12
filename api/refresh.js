@@ -1,7 +1,7 @@
 // Vercel serverless function — renouvelle un access_token Strava expiré
 // Appelé automatiquement par le frontend quand le token expire (après 6h)
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   if (req.method !== 'POST') {
     return res.status(405).json({ error: 'Method not allowed' });
   }

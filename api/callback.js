@@ -1,7 +1,7 @@
 // Vercel serverless function — échange le code OAuth Strava contre des tokens
 // Le client_secret reste côté serveur, jamais exposé dans le frontend
 
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
   const { code, error } = req.query;
 
   if (error) {
