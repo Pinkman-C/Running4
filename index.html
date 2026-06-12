@@ -4,6 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Coach Running — Porto Marathon</title>
+  <meta name="description" content="Coach running personnel — préparation Marathon de Porto 2026.">
+  <meta name="theme-color" content="#243127">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Coach Running">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='6' fill='%23E8521A'/%3E%3Cpath d='M4 17c3.5-1.6 6.2-1.5 8.1.3 1.9 1.8 4.5 1.9 7.9.3M7 13l2.5-4.6 4.2 1.2L17 6M10 8.4l2.2 4.5-2 3.6M14 9.7l2.4 4.8' fill='none' stroke='white' stroke-width='1.9' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.js" integrity="sha384-iU8HYtnGQ8Cy4zl7gbNMOhsDTTKX02BTXptVP/vqAWIaTfM7isw76iyZCsjL2eVi" crossorigin="anonymous"></script>
   <style>
     :root {
@@ -101,6 +107,7 @@
     .tabs::-webkit-scrollbar { display: none; }
     .tab {
       padding: 12px 14px; font-size: 12px; font-weight: 650;
+      font-family: inherit; background: none; border: none;
       color: var(--muted); cursor: pointer; border-bottom: 2px solid transparent;
       transition: color 0.22s var(--ease), background 0.22s var(--ease), border-color 0.22s var(--ease);
       white-space: nowrap; flex-shrink: 0;
@@ -259,6 +266,21 @@
       background: linear-gradient(135deg,var(--accent),var(--accent-dark));
       font-size: 11px; font-weight: 850; cursor: pointer; white-space: nowrap;
     }
+    .mini-action[disabled] { opacity: 0.55; cursor: default; }
+    .sesh-real { margin-top: 3px; font-size: 10px; font-weight: 750; color: #0F766E; }
+
+    /* TOAST */
+    #toast {
+      position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%) translateY(8px);
+      z-index: 80; max-width: min(92vw, 480px);
+      background: rgba(22,21,20,0.94); color: white; border-radius: 12px;
+      padding: 11px 16px; font-size: 12.5px; line-height: 1.45;
+      box-shadow: var(--shadow-md); opacity: 0; pointer-events: none;
+      transition: opacity 0.25s var(--ease), transform 0.25s var(--ease);
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+    #toast.error { background: rgba(146,33,18,0.96); }
+    #toast a { color: #FFD0B5; }
 
     /* CETTE SEMAINE */
     .phase-badge {
@@ -606,21 +628,21 @@
       </svg>
     </div>
     <div>
-      <div class="next-lbl">Prochaine séance</div>
+      <div class="next-lbl" id="next-label">Prochaine séance</div>
       <div class="next-name" id="next-name">Chargement…</div>
       <div class="next-detail" id="next-detail"></div>
     </div>
   </div>
 </div>
 
-<div class="tabs">
-  <div class="tab active" onclick="showTab('dashboard')">Dashboard</div>
-  <div class="tab" onclick="showTab('week')">Cette Semaine</div>
-  <div class="tab" onclick="showTab('plan')">Plan 22 sem.</div>
-  <div class="tab" onclick="showTab('events')">Événements</div>
-  <div class="tab" onclick="showTab('profile')">Profil</div>
-  <div class="tab" onclick="showTab('activities')">Mes Sorties</div>
-  <div class="tab" onclick="showTab('stats')">Progression</div>
+<div class="tabs" role="tablist">
+  <button type="button" class="tab active" data-tab="dashboard" onclick="showTab('dashboard')">Dashboard</button>
+  <button type="button" class="tab" data-tab="week" onclick="showTab('week')">Cette Semaine</button>
+  <button type="button" class="tab" data-tab="plan" onclick="showTab('plan')">Plan 22 sem.</button>
+  <button type="button" class="tab" data-tab="events" onclick="showTab('events')">Événements</button>
+  <button type="button" class="tab" data-tab="profile" onclick="showTab('profile')">Profil</button>
+  <button type="button" class="tab" data-tab="activities" onclick="showTab('activities')">Mes Sorties</button>
+  <button type="button" class="tab" data-tab="stats" onclick="showTab('stats')">Progression</button>
 </div>
 
 <div class="content" id="content">
@@ -628,6 +650,7 @@
 </div>
 
 <div class="modal-backdrop" id="session-modal" onclick="closeSessionDetail(event)"></div>
+<div id="toast" role="status" aria-live="polite"></div>
 
 <script>
 // ─────────────────────────────────────────────────────────────
@@ -1024,17 +1047,22 @@ async function ensureValidToken() {
     body: JSON.stringify({ refresh_token: t.refresh_token }),
   });
   const data = await r.json();
-  if (!data.access_token) throw new Error('Refresh échoué');
+  if (!data.access_token) {
+    // Refresh token révoqué côté Strava → on repart sur une connexion propre
+    if (r.status === 401) localStorage.removeItem(TOKEN_KEY);
+    throw new Error('Reconnexion Strava nécessaire');
+  }
   saveTokens({ access_token: data.access_token, refresh_token: data.refresh_token || t.refresh_token, expires_at: data.expires_at });
   return data.access_token;
 }
 
 function connectStrava() {
   const params = new URLSearchParams({
-    client_id:    STRAVA_CLIENT_ID,
-    redirect_uri: window.location.origin + '/api/callback',
-    response_type:'code',
-    scope:        'activity:read_all',
+    client_id:      STRAVA_CLIENT_ID,
+    redirect_uri:   window.location.origin + '/api/callback',
+    response_type:  'code',
+    approval_prompt:'auto',
+    scope:          'activity:read_all',
   });
   window.location.href = `https://www.strava.com/oauth/authorize?${params}`;
 }
@@ -1043,22 +1071,56 @@ function disconnectStrava() {
   localStorage.removeItem(TOKEN_KEY);
   cache = null; stravaHistory = []; stravaSyncedAt = null;
   saveAppState();
-  renderProfile();
+  rerenderCurrentTab();
+  showToast('Compte Strava déconnecté.');
 }
 
+const AUTH_ERROR_MESSAGES = {
+  access_denied: 'Connexion Strava annulée.',
+  no_code: 'Connexion Strava incomplète — aucun code reçu, réessaie.',
+  token_exchange_failed: 'Strava a refusé l’échange de tokens. Vérifie STRAVA_CLIENT_ID / STRAVA_CLIENT_SECRET côté Vercel.',
+  server_error: 'Erreur serveur pendant la connexion Strava. Réessaie dans un instant.',
+};
+
 function handleOAuthCallback() {
-  const params = new URLSearchParams(window.location.search);
-  if (params.has('access_token')) {
+  const query = new URLSearchParams(window.location.search);
+  const hash  = new URLSearchParams((window.location.hash || '').replace(/^#/, ''));
+  const src   = hash.has('access_token') ? hash : query;
+
+  if (src.has('access_token')) {
     saveTokens({
-      access_token:  params.get('access_token'),
-      refresh_token: params.get('refresh_token'),
-      expires_at:    parseInt(params.get('expires_at'), 10),
+      access_token:  src.get('access_token'),
+      refresh_token: src.get('refresh_token'),
+      expires_at:    parseInt(src.get('expires_at'), 10),
     });
     window.history.replaceState({}, document.title, window.location.pathname);
-  } else if (params.has('auth_error')) {
-    console.error('Auth Strava error:', params.get('auth_error'));
+    showToast('Strava connecté — synchronisation en cours…');
+  } else if (query.has('auth_error')) {
+    const code = query.get('auth_error');
+    console.error('Auth Strava error:', code);
     window.history.replaceState({}, document.title, window.location.pathname);
+    showToast(AUTH_ERROR_MESSAGES[code] || `Connexion Strava échouée (${escapeHtml(code)}).`, 'error', 9000);
   }
+}
+
+let toastTimer = null;
+function showToast(message, type = 'info', duration = 4500) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.innerHTML = message;
+  el.classList.toggle('error', type === 'error');
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), duration);
+}
+
+function rerenderCurrentTab() {
+  const renderers = {
+    dashboard: renderDashboard, week: renderWeek, plan: renderPlan,
+    events: renderEvents, profile: renderProfile,
+    activities: renderActivities, stats: renderStats,
+  };
+  (renderers[currentTab] || renderDashboard)();
 }
 
 function sportStyle(type) {
@@ -1125,7 +1187,8 @@ function stravaToHistory(activities) {
         km:   +(dist / 1000).toFixed(2),
         spd,
         type: a.sport_type === 'TrailRun' ? 'Trail' : 'Run',
-        note: a.name,
+        // workout_type 1 = course officielle → seules les vraies courses deviennent des jalons
+        note: a.workout_type === 1 ? a.name : null,
         hr:   a.average_heartrate ? Math.round(a.average_heartrate) : null,
         id:   a.id,
       };
@@ -1133,13 +1196,17 @@ function stravaToHistory(activities) {
     .filter(a => a.d && a.km > 0 && a.spd > 0);
 }
 
+let syncInFlight = false;
 async function syncStrava() {
+  if (syncInFlight) return;
   const status = document.getElementById('sync-status');
   if (!isStravaConnected()) {
     if (status) status.innerHTML = `<button onclick="connectStrava()" style="background:#FC4C02;color:#fff;border:none;padding:6px 14px;border-radius:6px;cursor:pointer;font-weight:600">Connecter Strava</button>`;
     return;
   }
-  if (status) status.textContent = 'Chargement Strava…';
+  syncInFlight = true;
+  document.querySelectorAll('.mini-action').forEach(b => b.disabled = true);
+  if (status) status.textContent = 'Synchronisation Strava…';
   try {
     const token = await ensureValidToken();
     // Récupère les 80 dernières activités (couvre toute la saison)
@@ -1147,23 +1214,27 @@ async function syncStrava() {
       'https://www.strava.com/api/v3/athlete/activities?per_page=80',
       { headers: { 'Authorization': `Bearer ${token}` } }
     );
+    if (r.status === 401) {
+      localStorage.removeItem(TOKEN_KEY);
+      throw new Error('session Strava expirée, reconnecte ton compte');
+    }
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const activities = await r.json();
+    if (!Array.isArray(activities)) throw new Error('réponse Strava inattendue');
     cache = { activities };
     stravaHistory = stravaToHistory(activities);
     stravaSyncedAt = new Date().toISOString();
     saveAppState();
-    if (status) {
-      const d = new Date(stravaSyncedAt);
-      status.textContent = `Sync ${d.toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})} · ${stravaHistory.length} sorties`;
-    }
-    if (currentTab === 'dashboard') renderDashboard();
-    else if (currentTab === 'profile') renderProfile();
-    else if (currentTab === 'stats') renderStats();
-    else if (currentTab === 'activities') renderActivities();
+    rerenderCurrentTab();
   } catch(err) {
     console.error('syncStrava error:', err);
-    if (status) status.textContent = 'Erreur sync Strava.';
+    if (document.getElementById('sync-status')) {
+      document.getElementById('sync-status').textContent = 'Erreur de synchronisation Strava.';
+    }
+    showToast(`Sync Strava impossible — ${escapeHtml(err.message)}.`, 'error', 6000);
+  } finally {
+    syncInFlight = false;
+    document.querySelectorAll('.mini-action').forEach(b => b.disabled = false);
   }
 }
 
@@ -1520,9 +1591,9 @@ function setSessionLog(weekIdx, dayIdx, status) {
   sessionLogs[sessionKey(weekIdx, dayIdx)] = status;
   saveAppState();
   closeSessionDetail();
-  if (currentTab === 'week') renderWeek();
-  else if (currentTab === 'dashboard') renderDashboard();
-  else if (currentTab === 'plan') renderPlan();
+  rerenderCurrentTab();
+  const meta = sessionLogMeta(status);
+  if (meta) showToast(`Séance marquée « ${meta.label} ».`);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1546,22 +1617,19 @@ let stravaSyncedAt = INITIAL_STATE.stravaSyncedAt || null;
 function refreshHeader() {
   const now  = new Date();
   const days = Math.ceil((RACE_DATE - now) / 86400000);
-  document.getElementById('days-count').textContent = days;
+  document.getElementById('days-count').textContent = Math.max(0, days);
 
   const wi  = weekIndex(now);
   document.getElementById('week-chip').textContent = `Semaine ${wi+1}/22`;
 
-  const nx = nextSession(wi, dayOfWeek(now));
-  if (nx) {
-    const { s } = nx;
-    document.getElementById('next-name').textContent =
-      `${DAYS_FULL[s.day]} — ${T[s.type].name}`;
-    document.getElementById('next-detail').textContent =
-      `${s.dist > 0 ? s.dist+' km · ' : ''}${s.pace} · ${s.desc}`;
-  } else {
-    document.getElementById('next-name').textContent = 'Race day !';
-    document.getElementById('next-detail').textContent = 'Marathon de Porto — 8 novembre';
-  }
+  // Cohérent avec le dashboard : la séance du jour reste affichée tant qu'elle n'est pas passée
+  const cur = currentOrNextSession(now);
+  const s = cur.s;
+  document.getElementById('next-label').textContent = cur.label;
+  document.getElementById('next-name').textContent =
+    cur.label === "Aujourd'hui" ? T[s.type].name : `${DAYS_FULL[s.day]} — ${T[s.type].name}`;
+  document.getElementById('next-detail').textContent =
+    `${s.dist > 0 ? s.dist+' km · ' : ''}${s.pace} · ${s.desc}`;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1572,7 +1640,7 @@ function renderDashboard() {
   const focusType = T[m.focus.s.type] || T.rest;
   const event = m.nextEvent;
   const daysToEvent = event ? daysBetween(event.date, m.now) : null;
-  const eventPriority = event ? priorityStyle(event.priority) : null;
+  const eventPriority = event ? priorityStyle(event.priority) : { color:'#6B7280', bg:'#F3F4F6' };
   const loadMax = Math.max(m.week.vol, m.last7, m.weeklyAvg, 1);
   const targetPace = paceForDistance(targetMinutes, 42.195);
   const halfSplit = fmtDurationMinutes(targetMinutes / 2);
@@ -1580,7 +1648,9 @@ function renderDashboard() {
   const forecast = marathonForecast(m);
   const syncLabel = stravaSyncedAt
     ? `Dernière sync: ${new Date(stravaSyncedAt).toLocaleDateString('fr-FR',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})} · ${stravaHistory.length} sorties`
-    : 'Strava MCP connecté côté Claude: lance une sync pour nourrir le moteur live.';
+    : isStravaConnected()
+      ? 'Strava connecté — lance une première synchronisation.'
+      : 'Connecte ton compte Strava pour nourrir le coach avec tes vraies sorties.';
   const feelingLabels = {
     sharp:'Frais',
     normal:'Stable',
@@ -1658,7 +1728,9 @@ function renderDashboard() {
         <div class="profile-note">Surveillance: ${athleteProfile.injuryWatch}. Objectif: ${athleteProfile.marathonGoal}.</div>
         <div class="sync-row">
           <div class="sync-status" id="sync-status">${syncLabel}</div>
-          <button class="mini-action" type="button" onclick="syncStrava()">Sync Strava</button>
+          ${isStravaConnected()
+            ? '<button class="mini-action" type="button" onclick="syncStrava()">Sync Strava</button>'
+            : '<button class="mini-action" type="button" style="background:#FC4C02" onclick="connectStrava()">Connecter Strava</button>'}
         </div>
       </section>
 
@@ -1731,9 +1803,9 @@ function renderDashboard() {
       <section class="strategy-card">
         <div class="card-head">
           <div class="card-title">${iconSvg('event')}Objectifs stratégiques</div>
-          <span class="status-pill" style="background:${eventPriority.bg};color:${eventPriority.color}">Priorité ${event.priority}</span>
+          <span class="status-pill" style="background:${eventPriority.bg};color:${eventPriority.color}">${event ? `Priorité ${event.priority}` : 'Saison finie'}</span>
         </div>
-        <div class="strategy-list">${strategyItems}</div>
+        <div class="strategy-list">${strategyItems || '<div class="strategy-meta">Aucun objectif à venir — ajoute une course dans l’onglet Événements.</div>'}</div>
       </section>
 
       <div class="premium-actions">
@@ -1809,12 +1881,24 @@ function renderProfile() {
     <div class="profile-card">
       <div class="card-head">
         <div class="card-title">${iconSvg('ai')}Moteur Strava</div>
-        <span class="status-pill" style="background:#EFF6FF;color:#2563EB">${stravaHistory.length} sorties</span>
+        <span class="status-pill" style="background:${isStravaConnected() ? '#F0FDFA' : '#FEF2F2'};color:${isStravaConnected() ? '#0F766E' : '#DC2626'}">${isStravaConnected() ? 'Connecté' : 'Non connecté'}</span>
       </div>
-      <div class="profile-note" id="sync-status">${stravaSyncedAt ? `Dernière synchronisation ${new Date(stravaSyncedAt).toLocaleString('fr-FR')}` : 'Aucune synchronisation live stockée pour l’instant.'}</div>
+      <div class="profile-note" id="sync-status">${stravaSyncedAt ? `Dernière synchronisation ${new Date(stravaSyncedAt).toLocaleString('fr-FR')} · ${stravaHistory.length} sorties` : 'Aucune synchronisation live stockée pour l’instant.'}</div>
       <div class="sync-row">
         <div class="sync-status">Les sorties Strava alimentent charge, prono marathon, progression et décisions coach.</div>
-        <button class="mini-action" type="button" onclick="syncStrava()">Sync Strava</button>
+        ${isStravaConnected()
+          ? '<button class="mini-action" type="button" onclick="syncStrava()">Sync Strava</button>'
+          : '<button class="mini-action" type="button" style="background:#FC4C02" onclick="connectStrava()">Connecter Strava</button>'}
+      </div>
+      ${isStravaConnected() ? `
+      <div style="margin-top:10px">
+        <button class="ghost-action" type="button" style="width:100%" onclick="disconnectStrava()">Déconnecter Strava</button>
+      </div>` : ''}
+      <div class="profile-note" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--line)">
+        <b>Config OAuth</b> — sur <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener">strava.com/settings/api</a>,
+        le champ « Domaine de rappel autorisé » (Authorization Callback Domain) doit contenir exactement :
+        <b>${escapeHtml(window.location.hostname)}</b> (sans https:// ni chemin).
+        Sinon Strava renvoie l’erreur <i>redirect_uri invalid</i>.
       </div>
     </div>`;
   document.getElementById('content').innerHTML = html;
@@ -1836,6 +1920,7 @@ function saveProfile(e) {
   };
   saveAppState();
   renderProfile();
+  showToast('Profil enregistré.');
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1857,6 +1942,24 @@ function renderWeek() {
     if (!eventsByDay[d]) eventsByDay[d] = [];
     eventsByDay[d].push(ev);
   });
+
+  // Sorties réellement effectuées cette semaine (Strava + historique)
+  const weekEnd = new Date(ws.getTime() + 7 * 86400000);
+  const realByDay = {};
+  trainingHistory().forEach(a => {
+    const d = parseLocalDate(a.d);
+    if (d >= ws && d < weekEnd) {
+      const k = dayOfWeek(d);
+      if (!realByDay[k]) realByDay[k] = { km: 0, spd: [] };
+      realByDay[k].km += a.km;
+      if (a.spd > 0) realByDay[k].spd.push(a.spd);
+    }
+  });
+  const realSnippet = d => {
+    const r = realByDay[d];
+    if (!r) return '';
+    return `<div class="sesh-real">✓ ${r.km.toFixed(1)} km réalisés${r.spd.length ? ' · ' + fmtPace(average(r.spd)) : ''}</div>`;
+  };
 
   let html = `
     <div class="phase-badge" style="background:${ph.bg};color:${ph.color}">
@@ -1881,6 +1984,7 @@ function renderWeek() {
           <div class="sesh-icon" style="background:#F3F4F6;color:#9CA3AF">${iconSvg('rest')}</div>
           <div class="sesh-info">
             <div class="sesh-name" style="color:#9CA3AF">Repos</div>
+            ${realSnippet(d)}
             ${eventSnippet(dayEvents)}
           </div>
           ${logTag}
@@ -1895,6 +1999,7 @@ function renderWeek() {
           <div class="sesh-info">
             <div class="sesh-name">${tp.name}</div>
             <div class="sesh-desc">${sn.desc}</div>
+            ${realSnippet(d)}
             ${eventSnippet(dayEvents)}
           </div>
           <div class="sesh-meta">
@@ -1945,6 +2050,7 @@ function renderPlan() {
     const we   = new Date(ws.getTime() + 6*86400000);
     const isCur = i === cwi;
     const isPast = i < cwi;
+    const actualKm = i <= cwi ? kmBetween(ws, we) : null;
     const label = `${ws.getDate()} ${MO[ws.getMonth()]} – ${we.getDate()} ${MO[we.getMonth()]}`;
     const barW  = Math.round((week.vol / maxV) * 100);
     const nSess = week.sessions.filter(s => s.type !== 'rest').length;
@@ -1973,7 +2079,9 @@ function renderPlan() {
           <span class="pw-num">Sem. ${i+1}</span>
           <span class="pw-dot" style="background:${ph.color}"></span>
           <span class="pw-name">${ph.name}${isCur ? ' <span class="current-tag">En cours</span>' : ''}</span>
-          <span class="pw-vol">${week.vol} km</span>
+          <span class="pw-vol">${actualKm !== null
+            ? `<b style="color:${actualKm >= week.vol * 0.9 ? '#0F766E' : '#B45309'}">${Math.round(actualKm)}</b>/${week.vol} km`
+            : `${week.vol} km`}</span>
         </div>
         <div class="pw-dates">${label} · ${nSess} séance${nSess>1?'s':''}</div>
         <div class="pw-bar"><div class="pw-fill" style="width:${barW}%;background:${ph.color}"></div></div>
@@ -2090,59 +2198,98 @@ function createEvent(e) {
   });
   saveAppState();
   renderEvents();
+  showToast('Course ajoutée — le coach en tient compte dans la stratégie.');
 }
 
 function deleteEvent(id) {
   EVENTS = EVENTS.filter(ev => ev.id !== id);
   saveAppState();
   renderEvents();
+  showToast('Course supprimée.');
 }
 
 // ─────────────────────────────────────────────────────────────
 // TAB 4 — MES SORTIES
 // ─────────────────────────────────────────────────────────────
+// Lecture coach locale : allure vs zones du plan + comparaison à la séance prévue
+function activityInsight(act) {
+  const km = (act.distance || 0) / 1000;
+  const paceMin = act.average_speed > 0 ? 1000 / act.average_speed / 60 : null;
+  const dateStr = String(act.start_date_local || act.start_local || '').slice(0, 10);
+  const d = dateStr ? parseLocalDate(dateStr) : null;
+  const isTrail = act.sport_type === 'TrailRun';
+  const parts = [];
+
+  // Séance prévue ce jour-là (si on est dans la fenêtre du plan)
+  if (d && d >= PLAN_START && d <= RACE_DATE) {
+    const planned = PLAN[weekIndex(d)]?.sessions.find(s => s.day === dayOfWeek(d));
+    if (planned && planned.type !== 'rest' && planned.dist > 0) {
+      const typeName = T[planned.type]?.name || planned.type;
+      const ratio = km / planned.dist;
+      if (ratio >= 0.85 && ratio <= 1.2) parts.push(`Colle au plan (${typeName} ${planned.dist} km prévu).`);
+      else if (ratio < 0.85) parts.push(`Plus court que prévu (${typeName} ${planned.dist} km) — ok si c’était le besoin du jour.`);
+      else parts.push(`Plus long que prévu (${typeName} ${planned.dist} km) — attention à la charge cachée.`);
+    } else if (planned && planned.type === 'rest') {
+      parts.push('Jour de repos au plan — si tu cours quand même, garde-le très facile.');
+    }
+  }
+
+  if (isTrail) {
+    const dplus = Math.round(act.total_elevation_gain || 0);
+    parts.push(`Trail${dplus ? ` +${dplus} m` : ''} : juge à l’effort, pas à l’allure. Bon transfert pour le profil vallonné.`);
+  } else if (paceMin) {
+    if (paceMin >= 6.5) parts.push(`${fmtPace(act.average_speed)} — bien dans la zone EF, c’est exactement ce qui construit la base.`);
+    else if (paceMin >= 6.0) parts.push(`${fmtPace(act.average_speed)} — un cran sous la zone EF (6:30-7:00) : ralentis sur les footings.`);
+    else if (paceMin >= 5.2) parts.push(`${fmtPace(act.average_speed)} — zone marathon/tempo : parfait si c’était voulu, piège si c’était un footing.`);
+    else parts.push(`${fmtPace(act.average_speed)} — travail rapide : assure une vraie récupération derrière.`);
+  }
+
+  if (act.average_heartrate) {
+    const hrMax = 220 - (Number(athleteProfile.age) || 33);
+    parts.push(`FC moy. ${Math.round(act.average_heartrate)} bpm (≈${Math.round(act.average_heartrate / hrMax * 100)}% FCmax estimée).`);
+  }
+
+  return parts.slice(0, 3).join(' ') || 'Sortie enregistrée — pas assez de données pour une lecture détaillée.';
+}
+
 async function renderActivities() {
-  document.getElementById('content').innerHTML =
-    '<div class="spinner-wrap"><div class="spin"></div> Récupération des sorties Strava…</div>';
+  const content = document.getElementById('content');
 
   if (!isStravaConnected()) {
-    document.getElementById('content').innerHTML = `
+    content.innerHTML = `
       <div style="padding:32px;text-align:center">
         <div style="font-size:1.1rem;font-weight:600;margin-bottom:8px">Strava non connecté</div>
         <div style="color:#888;margin-bottom:20px">Connecte ton compte Strava pour voir tes sorties en direct.</div>
         <button onclick="connectStrava()" style="background:#FC4C02;color:#fff;border:none;padding:10px 24px;border-radius:8px;cursor:pointer;font-size:1rem;font-weight:600">Connecter Strava</button>
+        <div style="color:#999;font-size:11px;margin-top:18px;line-height:1.5">
+          Erreur « redirect_uri invalid » sur Strava ? Déclare <b>${escapeHtml(window.location.hostname)}</b><br>
+          comme domaine de callback sur <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener">strava.com/settings/api</a>.
+        </div>
       </div>`;
     return;
   }
 
   if (!cache) {
-    try {
-      const token = await ensureValidToken();
-      const r = await fetch(
-        'https://www.strava.com/api/v3/athlete/activities?per_page=20',
-        { headers: { 'Authorization': `Bearer ${token}` } }
-      );
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      const activities = await r.json();
-      cache = { activities };
-      stravaHistory = stravaToHistory(activities);
-      stravaSyncedAt = new Date().toISOString();
-      saveAppState();
-    } catch(e) {
-      console.error('renderActivities error:', e);
-      document.getElementById('content').innerHTML =
-        '<div style="padding:20px;text-align:center;color:#888">Impossible de charger les activités Strava.</div>';
-      return;
+    content.innerHTML = '<div class="spinner-wrap"><div class="spin"></div> Récupération des sorties Strava…</div>';
+    await syncStrava(); // re-rend l’onglet en cas de succès
+    if (!cache) {
+      content.innerHTML = `
+        <div style="padding:20px;text-align:center;color:#888">
+          Impossible de charger les activités Strava.
+          <div style="margin-top:12px"><button class="mini-action" type="button" onclick="renderActivities()">Réessayer</button></div>
+        </div>`;
     }
+    return;
   }
 
   const runs = (cache.activities || []).filter(a =>
     ['Run','TrailRun'].includes(a.sport_type)
   );
+  const shown = Math.min(runs.length, 10);
 
-  let html = `<div class="section-title">Mes ${Math.min(runs.length,6)} dernières sorties</div>`;
+  let html = `<div class="section-title">Mes ${shown} dernières sorties</div>`;
 
-  runs.slice(0, 6).forEach(act => {
+  runs.slice(0, shown).forEach(act => {
     const st   = sportStyle(act.sport_type);
     const dist = fmtDist(act.distance || 0);
     const pace = fmtPace(act.average_speed || 0);
@@ -2154,7 +2301,7 @@ async function renderActivities() {
       <div class="act-card">
         <div class="act-header">
           <div>
-            <div class="act-name">${act.name}</div>
+            <div class="act-name">${escapeHtml(act.name || 'Sortie')}</div>
             <div class="act-date">${fmtDate(act.start_date_local || act.start_local)}</div>
           </div>
           <span class="type-badge" style="background:${st.bg};color:${st.color}">${st.lbl}</span>
@@ -2166,13 +2313,17 @@ async function renderActivities() {
           ${elev ? `<div class="ast"><div class="ast-val">${elev}</div><div class="ast-lbl">Dénivelé</div></div>` : ''}
           ${hr   ? `<div class="ast"><div class="ast-val">${hr}</div><div class="ast-lbl">FC moy.</div></div>` : ''}
           ${act.suffer_score ? `<div class="ast"><div class="ast-val">${act.suffer_score}</div><div class="ast-lbl">Effort rel.</div></div>` : ''}
-          ${act.calories ? `<div class="ast"><div class="ast-val">${act.calories}</div><div class="ast-lbl">Calories</div></div>` : ''}
         </div>
-        <div class="ai-box" id="ai-${act.id}" style="color:#aaa;font-size:0.85rem;padding:8px 12px">Analyse IA · à venir</div>
+        <div class="ai-box">${iconSvg('ai')}${activityInsight(act)}</div>
       </div>`;
   });
 
-  document.getElementById('content').innerHTML = html;
+  html += `
+    <div style="display:flex;justify-content:center;margin-top:4px">
+      <button class="ghost-action" type="button" onclick="syncStrava()">Resynchroniser Strava</button>
+    </div>`;
+
+  content.innerHTML = html;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2214,13 +2365,20 @@ function renderStats() {
     <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid #F0F0F0">
       <div class="milestone-icon">${iconSvg(a.type === 'Trail' ? 'long' : 'race')}</div>
       <div>
-        <div style="font-size:12px;font-weight:700">${cleanNote(a.note)}</div>
-        <div style="font-size:11px;color:#888">${new Date(a.d).toLocaleDateString('fr-FR',{day:'numeric',month:'long'})} · ${a.km.toFixed(1)} km · ${fmtPace(a.spd)}</div>
+        <div style="font-size:12px;font-weight:700">${escapeHtml(cleanNote(a.note))}</div>
+        <div style="font-size:11px;color:#888">${parseLocalDate(a.d).toLocaleDateString('fr-FR',{day:'numeric',month:'long'})} · ${a.km.toFixed(1)} km · ${fmtPace(a.spd)}</div>
       </div>
     </div>`).join('');
 
+  // Période couverte par l'historique (s'étend au fil des syncs Strava)
+  const capitalize = s => s.charAt(0).toUpperCase() + s.slice(1);
+  const monthOf = a => parseLocalDate(a.d).toLocaleDateString('fr-FR', { month:'long' });
+  const periodLabel = history.length
+    ? `${capitalize(monthOf(history[0]))} → ${monthOf(history[history.length-1])}`
+    : '';
+
   let html = `
-    <div class="section-title">Ma Progression — Avril à Juin</div>
+    <div class="section-title">Ma Progression${periodLabel ? ` — ${periodLabel}` : ''}</div>
     <div class="kpi-grid">
       <div class="kpi"><div class="kpi-val">${Math.round(totalKm)}</div><div class="kpi-lbl">km depuis avril</div></div>
       <div class="kpi"><div class="kpi-val">${avgPace}</div><div class="kpi-lbl">Allure moy. route</div></div>
@@ -2345,7 +2503,7 @@ function renderStats() {
           scales:{
             y:{
               reverse:true, beginAtZero:false,
-              min:4.5, max:7.0,
+              suggestedMin:4.5, suggestedMax:7.0,
               grid:{color:'#F0F0F0'},
               ticks:{
                 font:{size:10},
@@ -2368,17 +2526,11 @@ function renderStats() {
 // ─────────────────────────────────────────────────────────────
 function showTab(tab) {
   currentTab = tab;
-  const tabs = ['dashboard','week','plan','events','profile','activities','stats'];
-  document.querySelectorAll('.tab').forEach((el, i) => {
-    el.classList.toggle('active', tabs[i] === tab);
+  document.querySelectorAll('.tab').forEach(el => {
+    el.classList.toggle('active', el.dataset.tab === tab);
   });
-  if (tab==='dashboard')  renderDashboard();
-  else if (tab==='week')  renderWeek();
-  else if (tab==='plan')  renderPlan();
-  else if (tab==='events') renderEvents();
-  else if (tab==='profile') renderProfile();
-  else if (tab==='activities') renderActivities();
-  else if (tab==='stats') { renderStats(); }
+  rerenderCurrentTab();
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -2395,20 +2547,30 @@ function isAppAuthed() {
 
 function showLoginScreen() {
   document.body.innerHTML = `
-    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f8f9fa;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif">
-      <div style="background:#fff;border-radius:16px;padding:40px;width:320px;box-shadow:0 4px 24px rgba(0,0,0,0.08);text-align:center">
-        <div style="font-size:2rem;margin-bottom:8px">🏃</div>
-        <div style="font-size:1.3rem;font-weight:700;margin-bottom:4px">Coach Running</div>
-        <div style="color:#888;font-size:0.9rem;margin-bottom:28px">Porto Marathon 2026</div>
-        <input type="password" id="pwd-input" placeholder="Mot de passe"
-          style="width:100%;box-sizing:border-box;padding:12px 14px;border:1.5px solid #e5e7eb;border-radius:8px;font-size:1rem;margin-bottom:12px;outline:none"
-          onkeydown="if(event.key==='Enter') checkPassword()" />
-        <button onclick="checkPassword()"
-          style="width:100%;padding:12px;background:#2563EB;color:#fff;border:none;border-radius:8px;font-size:1rem;font-weight:600;cursor:pointer">
+    <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;
+                background:radial-gradient(circle at 20% -10%, rgba(232,82,26,0.18), transparent 34%),
+                           linear-gradient(180deg, #FBF7F1 0%, #F3F5F0 46%, #EEF2ED 100%)">
+      <form onsubmit="event.preventDefault(); checkPassword()"
+        style="background:rgba(255,255,255,0.9);border:1px solid rgba(255,255,255,0.76);border-radius:18px;padding:36px 32px;width:340px;box-shadow:0 18px 42px rgba(26,24,20,0.11);text-align:center;backdrop-filter:blur(10px)">
+        <div style="width:52px;height:52px;border-radius:15px;margin:0 auto 14px;display:flex;align-items:center;justify-content:center;
+                    background:linear-gradient(135deg,#243127,#A9350B);color:white">
+          <svg style="width:26px;height:26px" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 17c3.5-1.6 6.2-1.5 8.1.3 1.9 1.8 4.5 1.9 7.9.3"/>
+            <path d="M7 13l2.5-4.6 4.2 1.2L17 6"/>
+            <path d="M10 8.4l2.2 4.5-2 3.6"/>
+            <path d="M14 9.7l2.4 4.8"/>
+          </svg>
+        </div>
+        <div style="font-size:1.3rem;font-weight:850;letter-spacing:-0.3px;margin-bottom:4px">Coach Running</div>
+        <div style="color:#888;font-size:0.85rem;margin-bottom:26px">Porto Marathon 2026 · espace privé</div>
+        <input type="password" id="pwd-input" placeholder="Mot de passe" autocomplete="current-password"
+          style="width:100%;box-sizing:border-box;padding:12px 14px;border:1.5px solid #E5E0D8;background:#FBF9F5;border-radius:10px;font-size:1rem;margin-bottom:12px;outline:none" />
+        <button id="pwd-submit" type="submit"
+          style="width:100%;padding:12px;background:linear-gradient(135deg,#E8521A,#A9350B);color:#fff;border:none;border-radius:10px;font-size:1rem;font-weight:700;cursor:pointer;box-shadow:0 10px 20px rgba(232,82,26,0.18)">
           Accéder
         </button>
         <div id="pwd-error" style="color:#DC2626;font-size:0.85rem;margin-top:10px;min-height:18px"></div>
-      </div>
+      </form>
     </div>`;
   setTimeout(() => document.getElementById('pwd-input')?.focus(), 100);
 }
@@ -2416,9 +2578,11 @@ function showLoginScreen() {
 async function checkPassword() {
   const input = document.getElementById('pwd-input');
   const errEl = document.getElementById('pwd-error');
+  const btn = document.getElementById('pwd-submit');
   const pwd = input?.value || '';
   if (!pwd) return;
 
+  if (btn) { btn.disabled = true; btn.textContent = 'Vérification…'; }
   try {
     const r = await fetch('/api/auth-check', {
       method: 'POST',
@@ -2435,6 +2599,8 @@ async function checkPassword() {
     }
   } catch {
     if (errEl) errEl.textContent = 'Erreur réseau, réessaie.';
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = 'Accéder'; }
   }
 }
 

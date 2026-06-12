@@ -30,14 +30,15 @@ module.exports = async function handler(req, res) {
       return res.redirect('/?auth_error=token_exchange_failed');
     }
 
-    // Redirige vers l'app avec les tokens dans l'URL (stockés en localStorage par le frontend)
+    // Redirige vers l'app avec les tokens dans le fragment (#) : jamais envoyé au
+    // serveur, donc absent des logs — le frontend les stocke en localStorage
     const params = new URLSearchParams({
       access_token:  data.access_token,
       refresh_token: data.refresh_token,
       expires_at:    data.expires_at,
     });
 
-    res.redirect(`/?${params.toString()}`);
+    res.redirect(`/#${params.toString()}`);
   } catch (err) {
     console.error('Callback error:', err);
     res.redirect('/?auth_error=server_error');
