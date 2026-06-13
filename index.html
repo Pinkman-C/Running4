@@ -282,6 +282,41 @@
     #toast.error { background: rgba(146,33,18,0.96); }
     #toast a { color: #FFD0B5; }
 
+    /* REPROGRAMMATION SÉANCE */
+    .reprogram { margin-top: 12px; padding: 12px; border-radius: 13px; background: rgba(36,49,39,0.045); border: 1px solid rgba(28,24,20,0.06); }
+    .reprogram-label { font-size: 11px; font-weight: 800; color: #555; text-transform: uppercase; letter-spacing: 0.3px; margin-bottom: 8px; }
+    .day-picker { display: grid; grid-template-columns: repeat(7,1fr); gap: 5px; }
+    .day-pick {
+      border: 1px solid var(--line); background: rgba(255,255,255,0.78); color: #555;
+      border-radius: 9px; padding: 9px 0; font-size: 11px; font-weight: 800; cursor: pointer; font-family: inherit;
+      transition: transform 0.15s var(--ease), border-color 0.15s var(--ease), background 0.15s var(--ease);
+    }
+    .day-pick:hover { transform: translateY(-1px); border-color: rgba(232,82,26,0.4); }
+    .day-pick.active { background: var(--accent); color: white; border-color: var(--accent); }
+    .reprogram-reset {
+      margin-top: 9px; width: 100%; border: 1px dashed rgba(28,24,20,0.18); background: none; color: #777;
+      border-radius: 9px; padding: 8px; font-size: 11px; font-weight: 750; cursor: pointer; font-family: inherit;
+    }
+    .moved-tag { display: inline-block; margin-left: 6px; color: var(--accent); font-weight: 900; }
+
+    /* RENFORCEMENT */
+    .strength-intro { font-size: 12px; color: #666; line-height: 1.5; margin-bottom: 12px; }
+    .strength-form { margin-bottom: 14px; }
+    .strength-card .act-name { display: flex; align-items: center; gap: 6px; }
+    .strength-card .act-name .svg-icon { width: 16px; height: 16px; color: var(--accent); flex-shrink: 0; }
+    .focus-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+    .focus-chip {
+      border: 1px solid var(--line); background: rgba(255,255,255,0.78); color: #666;
+      border-radius: 999px; padding: 6px 11px; font-size: 11px; font-weight: 750; cursor: pointer; font-family: inherit;
+      transition: transform 0.15s var(--ease), border-color 0.15s var(--ease);
+    }
+    .focus-chip:hover { transform: translateY(-1px); border-color: rgba(232,82,26,0.35); }
+    .focus-chip.active { font-weight: 850; }
+    .strength-del {
+      margin-top: 9px; border: 0; background: rgba(220,38,38,0.08); color: #DC2626;
+      border-radius: 8px; padding: 7px 12px; font-size: 11px; font-weight: 800; cursor: pointer; font-family: inherit;
+    }
+
     /* CETTE SEMAINE */
     .phase-badge {
       display: inline-flex; align-items: center; gap: 6px;
@@ -672,7 +707,18 @@ const ICONS = {
   long: '<path d="m3 18 6.5-9 4.5 6 2-2.7L21 18H3Z"/><path d="M11 18 9.5 9"/><path d="M14 15h4"/>',
   race: '<path d="M6 21V4"/><path d="M6 5h11l-2 4 2 4H6"/><path d="M10 8h1M13 8h1M10 11h1M13 11h1"/>',
   event: '<path d="M7 3v4M17 3v4M4.5 9.5h15"/><path d="M6.5 5.5h11A2.5 2.5 0 0 1 20 8v10a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 18V8a2.5 2.5 0 0 1 2.5-2.5Z"/><path d="m9 15 2 2 4-5"/>',
-  ai: '<path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="3"/><path d="M10 11h.01M14 11h.01M10 14h4"/>'
+  ai: '<path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><rect x="7" y="7" width="10" height="10" rx="3"/><path d="M10 11h.01M14 11h.01M10 14h4"/>',
+  strength: '<path d="M4 9v6M7 7v10M17 7v10M20 9v6M7 12h10"/>'
+};
+
+// Focus de renforcement (le « bouton renfo jambes ») — « glutes » sert aussi
+// de protocole hanches/fessiers utile contre le syndrome de l'essuie-glace
+const STRENGTH_FOCUS = {
+  legs:   { lbl:'Renfo jambes',       short:'Jambes',  color:'#7C3AED', bg:'#F5F3FF' },
+  glutes: { lbl:'Hanches / fessiers', short:'Hanches', color:'#DB2777', bg:'#FCE7F3' },
+  core:   { lbl:'Gainage / core',     short:'Gainage', color:'#0F766E', bg:'#F0FDFA' },
+  upper:  { lbl:'Haut du corps',      short:'Haut',    color:'#2563EB', bg:'#EFF6FF' },
+  full:   { lbl:'Full body',          short:'Complet', color:'#D97706', bg:'#FFFBEB' },
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -1008,15 +1054,60 @@ function eventSnippet(events) {
   }).join('');
 }
 
+// Séances effectives d'une semaine = plan + déplacements utilisateur.
+// Chaque séance garde origDay (clé stable des logs) et un drapeau moved.
+function weekSessions(wi) {
+  const week = PLAN[wi];
+  if (!week) return [];
+  return week.sessions
+    .map(s => {
+      const moved = sessionMoves[`${wi}-${s.day}`];
+      const day = Number.isInteger(moved) ? moved : s.day;
+      return { ...s, day, origDay: s.day, moved: Number.isInteger(moved) && moved !== s.day };
+    })
+    .sort((a, b) => a.day - b.day);
+}
+
 function nextSession(wi, dow) {
   for (let w = wi; w < PLAN.length; w++) {
-    for (const s of PLAN[w].sessions) {
+    for (const s of weekSessions(w)) {
       if (w === wi && s.day <= dow) continue;
       if (s.type === 'rest') continue;
       return { wi: w, s };
     }
   }
   return null;
+}
+
+// Déplace une séance vers un autre jour de la même semaine.
+// Si le jour cible est déjà occupé, on échange les deux (1 séance/jour garanti).
+function moveSession(wi, origDay, targetDay) {
+  const sessions = weekSessions(wi);
+  const moving = sessions.find(s => s.origDay === origDay);
+  if (!moving || targetDay === moving.day) { closeSessionDetail(); return; }
+  const occupant = sessions.find(s => s.day === targetDay && s.origDay !== origDay);
+  const setDay = (oDay, d) => {
+    const key = `${wi}-${oDay}`;
+    if (d === oDay) delete sessionMoves[key];
+    else sessionMoves[key] = d;
+  };
+  const fromDay = moving.day;
+  setDay(origDay, targetDay);
+  if (occupant) setDay(occupant.origDay, fromDay); // échange
+  saveAppState();
+  closeSessionDetail();
+  rerenderCurrentTab();
+  showToast(occupant
+    ? `Séances permutées : ${DAYS_FR[targetDay]} ↔ ${DAYS_FR[fromDay]}.`
+    : `Séance déplacée à ${DAYS_FULL[targetDay].toLowerCase()}.`);
+}
+
+function resetSessionMove(wi, origDay) {
+  delete sessionMoves[`${wi}-${origDay}`];
+  saveAppState();
+  closeSessionDetail();
+  rerenderCurrentTab();
+  showToast('Séance remise à son jour initial.');
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1177,6 +1268,10 @@ function saveAppState() {
       athleteProfile,
       stravaHistory,
       stravaSyncedAt,
+      sessionMoves,
+      strengthHistory,
+      strengthFocus,
+      manualStrength,
     }));
   } catch {}
 }
@@ -1222,6 +1317,71 @@ function stravaToHistory(activities) {
     .filter(a => a.d && a.km > 0 && a.spd > 0);
 }
 
+// Séances de renforcement importées de Strava (muscu, workout, crossfit…)
+const STRENGTH_SPORT_TYPES = ['WeightTraining','Workout','Crossfit','Elliptical','StairStepper'];
+function stravaToStrength(activities) {
+  return (activities || [])
+    .filter(a => STRENGTH_SPORT_TYPES.includes(a.sport_type) || STRENGTH_SPORT_TYPES.includes(a.type))
+    .map(a => ({
+      id:     String(a.id),
+      d:      String(a.start_date_local || a.start_local || '').slice(0, 10),
+      name:   a.name || 'Renforcement',
+      min:    Math.round((a.moving_time || a.elapsed_time || 0) / 60),
+      hr:     a.average_heartrate ? Math.round(a.average_heartrate) : null,
+      source: 'strava',
+    }))
+    .filter(a => a.d);
+}
+
+// Fusion Strava + ajouts manuels, focus appliqué, le plus récent d'abord
+function allStrength() {
+  const fromStrava = strengthHistory.map(s => ({ ...s, focus: strengthFocus[s.id] || s.focus || null }));
+  const manual = manualStrength.map(s => ({ ...s, source: 'manual' }));
+  const byId = {};
+  [...fromStrava, ...manual].forEach(s => { byId[s.id] = s; });
+  return Object.values(byId).sort((a, b) => (a.d < b.d ? 1 : a.d > b.d ? -1 : 0));
+}
+
+function strengthCount(days = 28) {
+  const since = new Date(); since.setHours(0,0,0,0); since.setDate(since.getDate() - days + 1);
+  const todayStr = new Date().toISOString().slice(0,10);
+  return allStrength().filter(s => s.d <= todayStr && parseLocalDate(s.d) >= since).length;
+}
+
+function setStrengthFocus(id, key) {
+  // Toggle : re-cliquer le focus actif le retire
+  const manual = manualStrength.find(s => s.id === id);
+  if (manual) manual.focus = manual.focus === key ? null : key;
+  else strengthFocus[id] = strengthFocus[id] === key ? null : key;
+  saveAppState();
+  rerenderCurrentTab();
+}
+
+function addManualStrength(e) {
+  e.preventDefault();
+  const data = new FormData(e.currentTarget);
+  const d = data.get('date');
+  if (!d) return;
+  manualStrength.push({
+    id:    `m-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    d,
+    name:  (data.get('name') || '').trim() || 'Renforcement',
+    min:   Number(data.get('min')) || 0,
+    focus: data.get('focus') || null,
+    source:'manual',
+  });
+  saveAppState();
+  rerenderCurrentTab();
+  showToast('Séance de renfo ajoutée.');
+}
+
+function deleteManualStrength(id) {
+  manualStrength = manualStrength.filter(s => s.id !== id);
+  saveAppState();
+  rerenderCurrentTab();
+  showToast('Séance de renfo supprimée.');
+}
+
 let syncInFlight = false;
 async function syncStrava() {
   if (syncInFlight) return;
@@ -1249,6 +1409,7 @@ async function syncStrava() {
     if (!Array.isArray(activities)) throw new Error('réponse Strava inattendue');
     cache = { activities };
     stravaHistory = stravaToHistory(activities);
+    strengthHistory = stravaToStrength(activities);
     stravaSyncedAt = new Date().toISOString();
     saveAppState();
     rerenderCurrentTab();
@@ -1387,11 +1548,11 @@ function upcomingEvents(includePorto = true) {
 function currentOrNextSession(now = new Date()) {
   const wi = weekIndex(now);
   const dow = dayOfWeek(now);
-  const today = PLAN[wi].sessions.find(s => s.day === dow);
+  const today = weekSessions(wi).find(s => s.day === dow);
   if (today) return { label:"Aujourd'hui", wi, s:today };
   const nx = nextSession(wi, dow);
   if (nx) return { label:'Prochaine séance', wi:nx.wi, s:nx.s };
-  return { label:'Objectif final', wi:21, s:PLAN[21].sessions.find(s => s.type === 'race') };
+  return { label:'Objectif final', wi:21, s:weekSessions(21).find(s => s.type === 'race') };
 }
 
 function dashboardModel() {
@@ -1559,10 +1720,13 @@ function sessionBlocks(session, model) {
 function openSessionDetail(weekIdx, dayIdx) {
   const week = PLAN[weekIdx];
   if (!week) return;
-  const session = week.sessions.find(s => s.day === dayIdx) || { day:dayIdx, type:'rest', dist:0, pace:'—', desc:'Repos complet' };
+  // dayIdx = jour affiché (effectif) ; on retrouve la séance et son jour d'origine
+  const session = weekSessions(weekIdx).find(s => s.day === dayIdx)
+    || { day:dayIdx, origDay:dayIdx, type:'rest', dist:0, pace:'—', desc:'Repos complet' };
+  const origDay = session.origDay ?? dayIdx;
   const model = dashboardModel();
   const type = T[session.type] || T.rest;
-  const logMeta = sessionLogMeta(sessionLogs[sessionKey(weekIdx, dayIdx)]);
+  const logMeta = sessionLogMeta(sessionLogs[sessionKey(weekIdx, origDay)]);
   const ws = weekStart(weekIdx);
   const date = new Date(ws.getTime() + dayIdx * 86400000);
   const blocks = sessionBlocks(session, model).map((block, i) => `
@@ -1574,13 +1738,26 @@ function openSessionDetail(weekIdx, dayIdx) {
       </div>
     </div>`).join('');
 
+  const isReal = session.type !== 'rest';
+  const movedNote = session.moved ? ` · déplacée (initial : ${DAYS_FR[origDay]})` : '';
+  const reprogram = isReal ? `
+      <div class="reprogram">
+        <div class="reprogram-label">Reprogrammer — je la fais plutôt…</div>
+        <div class="day-picker">
+          ${DAYS_FR.map((lbl, di) => `
+            <button type="button" class="day-pick ${di === dayIdx ? 'active' : ''}"
+              onclick="moveSession(${weekIdx}, ${origDay}, ${di})">${lbl}</button>`).join('')}
+        </div>
+        ${session.moved ? `<button type="button" class="reprogram-reset" onclick="resetSessionMove(${weekIdx}, ${origDay})">↩︎ Remettre au jour initial (${DAYS_FULL[origDay]})</button>` : ''}
+      </div>` : '';
+
   const modal = document.getElementById('session-modal');
   modal.innerHTML = `
     <div class="session-panel" onclick="event.stopPropagation()">
       <div class="session-head">
         <div>
           <div class="session-title">${type.name}</div>
-          <div class="session-meta">${DAYS_FULL[dayIdx]} ${date.toLocaleDateString('fr-FR',{day:'numeric',month:'long'})} · Semaine ${weekIdx + 1} · ${PHASES[week.phase].name}</div>
+          <div class="session-meta">${DAYS_FULL[dayIdx]} ${date.toLocaleDateString('fr-FR',{day:'numeric',month:'long'})} · Semaine ${weekIdx + 1} · ${PHASES[week.phase].name}${movedNote}</div>
         </div>
         <button class="close-btn" type="button" onclick="closeSessionDetail()">×</button>
       </div>
@@ -1593,10 +1770,11 @@ function openSessionDetail(weekIdx, dayIdx) {
         </div>
       </div>
       <div class="session-blocks">${blocks}</div>
+      ${reprogram}
       <div class="log-actions">
-        <button class="log-btn done" type="button" onclick="setSessionLog(${weekIdx}, ${dayIdx}, 'done')">Validée</button>
-        <button class="log-btn adjusted" type="button" onclick="setSessionLog(${weekIdx}, ${dayIdx}, 'adjusted')">Allégée</button>
-        <button class="log-btn skipped" type="button" onclick="setSessionLog(${weekIdx}, ${dayIdx}, 'skipped')">Sautée</button>
+        <button class="log-btn done" type="button" onclick="setSessionLog(${weekIdx}, ${origDay}, 'done')">Validée</button>
+        <button class="log-btn adjusted" type="button" onclick="setSessionLog(${weekIdx}, ${origDay}, 'adjusted')">Allégée</button>
+        <button class="log-btn skipped" type="button" onclick="setSessionLog(${weekIdx}, ${origDay}, 'skipped')">Sautée</button>
       </div>
       <div class="session-actions">
         <button class="ghost-action" type="button" onclick="setFeeling('tired'); closeSessionDetail(); showTab('dashboard')">Je me sens lourd</button>
@@ -1636,6 +1814,12 @@ let targetMinutes = Number.isFinite(INITIAL_STATE.targetMinutes) ? INITIAL_STATE
 let athleteProfile = { ...DEFAULT_PROFILE, ...(INITIAL_STATE.athleteProfile || {}) };
 let stravaHistory = Array.isArray(INITIAL_STATE.stravaHistory) ? INITIAL_STATE.stravaHistory : [];
 let stravaSyncedAt = INITIAL_STATE.stravaSyncedAt || null;
+// Reprogrammation de séances : { "weekIdx-jourOriginal": nouveauJour }
+let sessionMoves = INITIAL_STATE.sessionMoves && typeof INITIAL_STATE.sessionMoves === 'object' ? INITIAL_STATE.sessionMoves : {};
+// Renforcement musculaire
+let strengthHistory = Array.isArray(INITIAL_STATE.strengthHistory) ? INITIAL_STATE.strengthHistory : []; // depuis Strava
+let strengthFocus = INITIAL_STATE.strengthFocus && typeof INITIAL_STATE.strengthFocus === 'object' ? INITIAL_STATE.strengthFocus : {}; // { activityId: focusKey }
+let manualStrength = Array.isArray(INITIAL_STATE.manualStrength) ? INITIAL_STATE.manualStrength : []; // séances ajoutées à la main
 
 // ─────────────────────────────────────────────────────────────
 // HEADER — compte à rebours
@@ -1963,7 +2147,7 @@ function renderWeek() {
   const dow  = dayOfWeek(now);
 
   const byDay = {};
-  week.sessions.forEach(s => byDay[s.day] = s);
+  weekSessions(wi).forEach(s => byDay[s.day] = s);
   const eventsByDay = {};
   eventsForWeek(wi).forEach(ev => {
     const d = dayOfWeek(parseLocalDate(ev.date));
@@ -1989,6 +2173,17 @@ function renderWeek() {
     return `<div class="sesh-real">✓ ${r.km.toFixed(1)} km réalisés${r.spd.length ? ' · ' + fmtPace(average(r.spd)) : ''}</div>`;
   };
 
+  // Séances de renfo réalisées cette semaine
+  const strengthByDay = {};
+  allStrength().forEach(s => {
+    const d = parseLocalDate(s.d);
+    if (d >= ws && d < weekEnd) (strengthByDay[dayOfWeek(d)] ||= []).push(s);
+  });
+  const strengthSnippet = d => (strengthByDay[d] || []).map(s => {
+    const f = STRENGTH_FOCUS[s.focus];
+    return `<div class="sesh-real" style="color:${f ? f.color : '#7C3AED'}">💪 Renfo${f ? ' · ' + f.short : ''}${s.min ? ' · ' + s.min + ' min' : ''}</div>`;
+  }).join('');
+
   let html = `
     <div class="phase-badge" style="background:${ph.bg};color:${ph.color}">
       <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${ph.color}"></span>
@@ -2001,9 +2196,11 @@ function renderWeek() {
     const sn  = byDay[d];
     const cls = d === dow ? 'today' : d < dow ? 'past' : '';
     const dayEvents = eventsByDay[d] || [];
-    const log = sessionLogMeta(sessionLogs[sessionKey(wi, d)]);
+    const logKey = sn ? sn.origDay : d;
+    const log = sessionLogMeta(sessionLogs[sessionKey(wi, logKey)]);
     const logClass = log ? `logged ${log.cls}` : '';
     const logTag = log ? `<span class="log-tag" style="background:${log.color}">${log.label}</span>` : '';
+    const movedTag = sn && sn.moved ? `<span class="moved-tag" title="Déplacée">↕</span>` : '';
 
     if (!sn) {
       html += `
@@ -2013,6 +2210,7 @@ function renderWeek() {
           <div class="sesh-info">
             <div class="sesh-name" style="color:#9CA3AF">Repos</div>
             ${realSnippet(d)}
+            ${strengthSnippet(d)}
             ${eventSnippet(dayEvents)}
           </div>
           ${logTag}
@@ -2025,9 +2223,10 @@ function renderWeek() {
           <div class="day-date"><div class="day-abbr">${DAYS_FR[d]}</div><div class="day-num">${dt.getDate()}</div></div>
           <div class="sesh-icon" style="background:${tp.bg};color:${tp.color}">${iconSvg(tp.icon)}</div>
           <div class="sesh-info">
-            <div class="sesh-name">${tp.name}</div>
+            <div class="sesh-name">${tp.name}${movedTag}</div>
             <div class="sesh-desc">${sn.desc}</div>
             ${realSnippet(d)}
+            ${strengthSnippet(d)}
             ${eventSnippet(dayEvents)}
           </div>
           <div class="sesh-meta">
@@ -2250,7 +2449,7 @@ function activityInsight(act) {
 
   // Séance prévue ce jour-là (si on est dans la fenêtre du plan)
   if (d && d >= PLAN_START && d <= RACE_DATE) {
-    const planned = PLAN[weekIndex(d)]?.sessions.find(s => s.day === dayOfWeek(d));
+    const planned = weekSessions(weekIndex(d)).find(s => s.day === dayOfWeek(d));
     if (planned && planned.type !== 'rest' && planned.dist > 0) {
       const typeName = T[planned.type]?.name || planned.type;
       const ratio = km / planned.dist;
@@ -2280,6 +2479,68 @@ function activityInsight(act) {
   return parts.slice(0, 3).join(' ') || 'Sortie enregistrée — pas assez de données pour une lecture détaillée.';
 }
 
+function strengthFocusChips(s) {
+  return Object.entries(STRENGTH_FOCUS).map(([key, f]) => `
+    <button type="button" class="focus-chip ${s.focus === key ? 'active' : ''}"
+      style="${s.focus === key ? `background:${f.bg};color:${f.color};border-color:${f.color}` : ''}"
+      onclick="setStrengthFocus('${s.id}','${key}')">${f.short}</button>`).join('');
+}
+
+function renderStrengthSection() {
+  const list = allStrength();
+  const today = new Date().toISOString().slice(0, 10);
+  const cards = list.slice(0, 12).map(s => {
+    const f = s.focus ? STRENGTH_FOCUS[s.focus] : null;
+    return `
+      <div class="act-card strength-card">
+        <div class="act-header">
+          <div>
+            <div class="act-name">${iconSvg('strength')}${escapeHtml(s.name)}</div>
+            <div class="act-date">${fmtEventDate(s.d)}${s.min ? ' · ' + s.min + ' min' : ''}${s.hr ? ' · ' + s.hr + ' bpm' : ''}${s.source === 'manual' ? ' · ajout manuel' : ''}</div>
+          </div>
+          ${f
+            ? `<span class="type-badge" style="background:${f.bg};color:${f.color}">${f.short}</span>`
+            : `<span class="type-badge" style="background:#FEF2F2;color:#DC2626">à taguer</span>`}
+        </div>
+        <div class="focus-row">${strengthFocusChips(s)}</div>
+        ${s.source === 'manual'
+          ? `<button type="button" class="strength-del" onclick="deleteManualStrength('${s.id}')">Supprimer</button>`
+          : ''}
+      </div>`;
+  }).join('');
+
+  return `
+    <div class="section-title" style="margin-top:22px">Renforcement musculaire</div>
+    <div class="strength-intro">
+      ${strengthCount(28)} séance(s) sur 28 jours. Tague le focus (le « bouton renfo jambes ») pour suivre l'équilibre.
+      ${isStravaConnected() ? 'Les séances muscu Strava remontent ici automatiquement.' : ''}
+    </div>
+    <form class="event-form strength-form" onsubmit="addManualStrength(event)">
+      <div class="form-grid">
+        <label class="form-field">
+          <span class="form-label">Date</span>
+          <input name="date" type="date" max="${today}" value="${today}" required>
+        </label>
+        <label class="form-field">
+          <span class="form-label">Durée (min)</span>
+          <input name="min" type="number" min="0" max="240" step="5" placeholder="30">
+        </label>
+        <label class="form-field">
+          <span class="form-label">Focus</span>
+          <select name="focus">
+            ${Object.entries(STRENGTH_FOCUS).map(([k, f]) => `<option value="${k}">${f.lbl}</option>`).join('')}
+          </select>
+        </label>
+        <label class="form-field">
+          <span class="form-label">Note (option)</span>
+          <input name="name" type="text" maxlength="60" placeholder="Renfo maison">
+        </label>
+      </div>
+      <button class="event-submit" type="submit">Ajouter une séance de renfo</button>
+    </form>
+    ${cards || '<div class="event-empty">Aucune séance de renfo pour l’instant. Ajoute-la ci-dessus ou synchronise Strava.</div>'}`;
+}
+
 async function renderActivities() {
   const content = document.getElementById('content');
 
@@ -2294,7 +2555,8 @@ async function renderActivities() {
           comme domaine de callback sur <a href="https://www.strava.com/settings/api" target="_blank" rel="noopener">strava.com/settings/api</a>
           (app ID client ${STRAVA_CLIENT_ID}).
         </div>
-      </div>`;
+      </div>
+      ${renderStrengthSection()}`;
     fillCanonicalHost();
     return;
   }
@@ -2353,6 +2615,7 @@ async function renderActivities() {
       <button class="ghost-action" type="button" onclick="syncStrava()">Resynchroniser Strava</button>
     </div>`;
 
+  html += renderStrengthSection();
   content.innerHTML = html;
 }
 
