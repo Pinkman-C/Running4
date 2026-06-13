@@ -343,6 +343,26 @@
       border-radius: 8px; padding: 7px 12px; font-size: 11px; font-weight: 800; cursor: pointer; font-family: inherit;
     }
 
+    /* COACH IA */
+    .adapt-action.ai { display: flex; align-items: center; gap: 7px; color: #0F557E; border-color: rgba(2,132,199,0.3); }
+    .adapt-action.ai .svg-icon { width: 15px; height: 15px; flex-shrink: 0; }
+    .coach-ask { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+    .coach-ask-row { display: grid; grid-template-columns: 1fr auto; gap: 7px; }
+    .coach-ask-input {
+      width: 100%; border: 1px solid var(--line); background: rgba(255,255,255,0.78);
+      border-radius: 10px; padding: 9px 11px; font-size: 12.5px; color: var(--ink); font-family: inherit; min-height: 38px;
+      transition: border-color 0.2s var(--ease), box-shadow 0.2s var(--ease);
+    }
+    .coach-ask-input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(232,82,26,0.1); }
+    .ai-coach-reply {
+      display: flex; gap: 8px; margin-top: 10px; padding: 11px 12px; border-radius: 11px;
+      background: #F0F9FF; border: 1px solid rgba(2,132,199,0.12);
+      font-size: 12.5px; line-height: 1.5; color: #0C4A6E;
+    }
+    .ai-coach-reply .svg-icon { width: 16px; height: 16px; color: #0284C7; flex-shrink: 0; margin-top: 1px; }
+    .ai-coach-reply.loading { color: #777; font-style: italic; }
+    .ai-coach-reply.error { background: #FEF2F2; border-color: rgba(220,38,38,0.14); color: #B42318; }
+
     /* CETTE SEMAINE */
     .phase-badge {
       display: inline-flex; align-items: center; gap: 6px;
@@ -1843,7 +1863,9 @@ function coachAdapt(wi, origDay, dayIdx, reason, zone) {
       <div class="adapt-copy">${plan.copy}</div>
       <div class="adapt-actions">
         ${plan.options.map(o => `<button type="button" class="adapt-action" onclick="${o.action}">${o.label}</button>`).join('')}
+        <button type="button" class="adapt-action ai" onclick="askCoachAdapt(${wi},${origDay},${dayIdx},'${reason}',${zone ? `'${zone}'` : 'null'})">${iconSvg('ai')}Avis personnalisé du coach IA</button>
       </div>
+      <div id="coach-ai-adapt-result"></div>
     </div>`;
 }
 
@@ -1860,6 +1882,71 @@ function quickRenfo(focus, reason, wi, origDay) {
   closeSessionDetail();
   rerenderCurrentTab();
   showToast(`Renfo ${STRENGTH_FOCUS[focus]?.short || ''} enregistré · séance course remplacée.`);
+}
+
+// ─────────────────────────────────────────────────────────────
+// COACH IA — conseils générés par l'API Claude (fonction /api/coach)
+// ─────────────────────────────────────────────────────────────
+const COACH_SYSTEM = "Tu es le coach de course à pied personnel de cet athlète : expert, bienveillant et concret. Vous préparez ensemble le Marathon de Porto (8 nov. 2026). Appuie-toi sur le contexte fourni pour personnaliser. Sois concis (3 à 6 phrases), ton direct et encourageant, sans markdown ni listes à puces. Pour toute douleur ou blessure, reste prudent : privilégie repos/adaptation et recommande un avis médical (kiné) si le doute persiste. Réponds en français.";
+
+// Résumé de l'athlète et de sa charge, envoyé au modèle à chaque appel
+function coachContext() {
+  const m = dashboardModel();
+  const recent = trainingHistory().slice(-6)
+    .map(a => `${a.d} ${a.km.toFixed(1)}km ${a.type} ${fmtPace(a.spd)}`).join(' | ');
+  return [
+    `Athlète: ${athleteProfile.name}, ${athleteProfile.age} ans, ${athleteProfile.weight} kg, niveau ${athleteProfile.experience}.`,
+    `Objectif: ${athleteProfile.marathonGoal} — cible ${fmtDurationMinutes(targetMinutes)} à Porto.`,
+    `Allure EF: ${athleteProfile.easyPace}. Jours dispo: ${athleteProfile.availableDays}. Terrain: ${athleteProfile.preferredTerrain}.`,
+    `Zones à surveiller: ${athleteProfile.injuryWatch}. Ressenti du jour: ${athleteFeeling}.`,
+    `Semaine ${m.wi + 1}/22 (${m.ph.name}), ${m.week.vol} km planifiés. Forme estimée ${m.score}/100, charge 7j ${Math.round(m.last7)} km.`,
+    `Sorties récentes: ${recent || 'aucune'}. Renfo (28j): ${strengthCount(28)} séance(s).`,
+  ].join('\n');
+}
+
+async function askCoach(prompt, target, system) {
+  const box = target || document.getElementById('coach-ai-result');
+  if (box) box.innerHTML = '<div class="ai-coach-reply loading">' + iconSvg('ai') + 'Le coach réfléchit…</div>';
+  try {
+    const r = await fetch('/api/coach', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ system: system || COACH_SYSTEM, prompt }),
+    });
+    const data = await r.json();
+    if (data.error === 'missing_api_key') throw new Error('clé API absente côté Vercel');
+    if (!r.ok || !data.text) throw new Error(data.details || data.error || 'réponse vide');
+    if (box) box.innerHTML = `<div class="ai-coach-reply">${iconSvg('ai')}<span>${escapeHtml(data.text).replace(/\n/g, '<br>')}</span></div>`;
+    return data.text;
+  } catch (e) {
+    if (box) box.innerHTML = `<div class="ai-coach-reply error">${iconSvg('ai')}<span>Coach IA indisponible (${escapeHtml(String(e.message))}). Réessaie.</span></div>`;
+  }
+}
+
+// Avis IA personnalisé sur l'adaptation d'une séance (depuis le modal)
+function askCoachAdapt(wi, origDay, dayIdx, reason, zone) {
+  const session = weekSessions(wi).find(s => s.origDay === origDay) || { type:'rest', desc:'séance', dist:0, pace:'—' };
+  const t = T[session.type] || T.rest;
+  const reasonLabels = { pain:'une douleur', fatigue:'de la fatigue', time:'un manque de temps', weather:'la météo', travel:'un déplacement' };
+  const zoneLabel = zone ? (PAIN_ZONES.find(z => z.key === zone) || {}).lbl : '';
+  const prompt = `${coachContext()}\n\nSéance prévue aujourd'hui : "${session.desc}" (${t.name}, ${session.dist > 0 ? session.dist + ' km' : 'repos'}, allure ${session.pace}). L'athlète doit l'adapter à cause de ${reasonLabels[reason] || reason}${zoneLabel ? ` (zone : ${zoneLabel})` : ''}. Donne-lui la meilleure adaptation concrète (alléger / déplacer / remplacer par renfo ou cross-training / repos) et explique pourquoi, en tenant compte de sa prépa marathon.`;
+  askCoach(prompt, document.getElementById('coach-ai-adapt-result'));
+}
+
+// Conseil global du jour (depuis le dashboard)
+function askCoachToday() {
+  const cur = currentOrNextSession();
+  const s = cur.s;
+  const prompt = `${coachContext()}\n\n${cur.label === "Aujourd'hui" ? `Séance du jour : "${s.desc}" (${T[s.type].name}, ${s.dist > 0 ? s.dist + ' km' : 'repos'}, ${s.pace}).` : `Prochaine séance : "${s.desc}".`} Donne-moi ton conseil pour aujourd'hui : comment aborder la séance, à quoi faire attention vu ma forme et ma charge actuelles.`;
+  askCoach(prompt, document.getElementById('coach-ai-result'));
+}
+
+// Question libre au coach (depuis le dashboard)
+function askCoachFree() {
+  const input = document.getElementById('coach-ask-input');
+  const q = (input?.value || '').trim();
+  if (!q) return;
+  askCoach(`${coachContext()}\n\nQuestion de l'athlète : ${q}`, document.getElementById('coach-ai-result'));
 }
 
 function openSessionDetail(weekIdx, dayIdx) {
@@ -2084,6 +2171,14 @@ function renderDashboard() {
           ${Object.entries(feelingLabels).map(([key,label]) => `
             <button class="feel-btn ${athleteFeeling === key ? 'active' : ''}" type="button" onclick="setFeeling('${key}')">${label}</button>
           `).join('')}
+        </div>
+        <div class="coach-ask">
+          <div class="coach-ask-row">
+            <input id="coach-ask-input" class="coach-ask-input" type="text" maxlength="240" placeholder="Pose une question à ton coach IA…" onkeydown="if(event.key==='Enter')askCoachFree()">
+            <button class="mini-action" type="button" onclick="askCoachFree()">Demander</button>
+          </div>
+          <button class="ghost-action" type="button" style="width:100%;margin-top:8px" onclick="askCoachToday()">${iconSvg('ai')}Conseil du coach pour aujourd'hui</button>
+          <div id="coach-ai-result"></div>
         </div>
       </section>
 
