@@ -299,6 +299,32 @@
     }
     .moved-tag { display: inline-block; margin-left: 6px; color: var(--accent); font-weight: 900; }
 
+    /* COACH ADAPTATIF (raison → alternative) */
+    .coach-adapt { margin-top: 12px; padding: 12px; border-radius: 13px; background: #F0F9FF; border: 1px solid rgba(2,132,199,0.12); }
+    .coach-adapt .reprogram-label { color: #0369A1; display: flex; align-items: center; gap: 6px; }
+    .coach-adapt .reprogram-label .svg-icon { width: 15px; height: 15px; }
+    .reason-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+    .zone-grid { margin-top: 6px; }
+    .reason-btn {
+      border: 1px solid rgba(2,132,199,0.18); background: rgba(255,255,255,0.85); color: #0F557E;
+      border-radius: 999px; padding: 8px 12px; font-size: 12px; font-weight: 750; cursor: pointer; font-family: inherit;
+      transition: transform 0.15s var(--ease), border-color 0.15s var(--ease), background 0.15s var(--ease);
+    }
+    .reason-btn:hover { transform: translateY(-1px); }
+    .reason-btn.active { background: #0284C7; color: white; border-color: #0284C7; }
+    .adapt-card { margin-top: 10px; background: rgba(255,255,255,0.9); border: 1px solid rgba(2,132,199,0.1); border-radius: 11px; padding: 11px; }
+    .adapt-title { font-size: 12.5px; font-weight: 850; color: #0F557E; margin-bottom: 4px; }
+    .adapt-copy { font-size: 12px; line-height: 1.5; color: #444; }
+    .adapt-copy i { color: #92400E; font-style: italic; }
+    .adapt-actions { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+    .adapt-action {
+      border: 1px solid var(--line); background: white; color: var(--ink);
+      border-radius: 9px; padding: 10px; font-size: 12px; font-weight: 800; cursor: pointer; font-family: inherit;
+      text-align: left; transition: transform 0.15s var(--ease), border-color 0.15s var(--ease);
+    }
+    .adapt-action:hover { transform: translateY(-1px); border-color: rgba(2,132,199,0.45); }
+    .focus-hint { font-size: 11px; color: #888; margin: 2px 0 6px; }
+
     /* RENFORCEMENT */
     .strength-intro { font-size: 12px; color: #666; line-height: 1.5; margin-bottom: 12px; }
     .strength-form { margin-bottom: 14px; }
@@ -1264,6 +1290,7 @@ function saveAppState() {
       events: EVENTS,
       athleteFeeling,
       sessionLogs,
+      sessionLogReason,
       targetMinutes,
       athleteProfile,
       stravaHistory,
@@ -1513,15 +1540,24 @@ function sessionLogMeta(status) {
 }
 
 function weekAdherence(weekIdx) {
-  const sessions = PLAN[weekIdx].sessions.filter(s => s.type !== 'rest');
-  if (!sessions.length) return { done:0, total:0, pct:0, adjusted:0, skipped:0 };
+  const sessions = weekSessions(weekIdx).filter(s => s.type !== 'rest');
+  if (!sessions.length) return { done:0, total:0, pct:0, adjusted:0, skipped:0, auto:0 };
+  // Jours (effectifs) où une sortie a réellement eu lieu cette semaine → validation auto
+  const ws = weekStart(weekIdx);
+  const we = new Date(ws.getTime() + 7 * 86400000);
+  const activeDays = new Set();
+  trainingHistory().forEach(a => {
+    const d = parseLocalDate(a.d);
+    if (d >= ws && d < we) activeDays.add(dayOfWeek(d));
+  });
   const counts = sessions.reduce((acc, s) => {
-    const status = sessionLogs[sessionKey(weekIdx, s.day)];
+    const status = sessionLogs[sessionKey(weekIdx, s.origDay)];
     if (status === 'done') acc.done += 1;
-    if (status === 'adjusted') { acc.done += 0.65; acc.adjusted += 1; }
-    if (status === 'skipped') acc.skipped += 1;
+    else if (status === 'adjusted') { acc.done += 0.65; acc.adjusted += 1; }
+    else if (status === 'skipped') acc.skipped += 1;
+    else if (activeDays.has(s.day)) { acc.done += 1; acc.auto += 1; } // sortie Strava détectée ce jour
     return acc;
-  }, { done:0, adjusted:0, skipped:0 });
+  }, { done:0, adjusted:0, skipped:0, auto:0 });
   return { ...counts, total:sessions.length, pct:Math.round(counts.done / sessions.length * 100) };
 }
 
@@ -1630,7 +1666,7 @@ function coachDecisions(model) {
     color: model.adherence.pct >= 75 ? '#16A34A' : model.adherence.pct >= 40 ? '#D97706' : '#DC2626',
     title: `Exécution semaine: ${model.adherence.pct}%`,
     copy: model.adherence.total
-      ? `${model.adherence.adjusted} séance(s) allégée(s), ${model.adherence.skipped} sautée(s). Le coach tient compte de l’exécution réelle, pas seulement du plan.`
+      ? `${model.adherence.auto} détectée(s) via Strava, ${model.adherence.adjusted} allégée(s), ${model.adherence.skipped} sautée(s). Tes sorties valident les séances automatiquement.`
       : 'Semaine sans séance active à cocher.',
   });
   return decisions;
@@ -1717,6 +1753,115 @@ function sessionBlocks(session, model) {
   ];
 }
 
+// ─────────────────────────────────────────────────────────────
+// COACH ADAPTATIF — encoder une raison, obtenir une alternative
+// ─────────────────────────────────────────────────────────────
+const PAIN_ZONES = [
+  { key:'knee',     lbl:'Genou',   emoji:'🦵' },
+  { key:'calf',     lbl:'Mollet',  emoji:'🦵' },
+  { key:'achilles', lbl:'Achille', emoji:'🦶' },
+  { key:'thigh',    lbl:'Cuisse',  emoji:'🦵' },
+  { key:'hip',      lbl:'Hanche',  emoji:'🦴' },
+  { key:'foot',     lbl:'Pied',    emoji:'🦶' },
+  { key:'other',    lbl:'Autre',   emoji:'❓' },
+];
+
+function adaptationPlan(session, reason, zone, model, wi, origDay, dayIdx) {
+  const tomorrow = Math.min(dayIdx + 1, 6);
+  const moveBtn = { label:'📅 Décaler à demain', action:`moveSession(${wi},${origDay},${tomorrow})` };
+  const skip   = r => ({ label:'🛑 Sautée + repos',  action:`setSessionLog(${wi},${origDay},'skipped','${r}')` });
+  const adjust = r => ({ label:'➖ Alléger',          action:`setSessionLog(${wi},${origDay},'adjusted','${r}')` });
+  const isQuality = ['tempo','intervals','marathon_pace','fartlek'].includes(session.type);
+  const isLong = session.type === 'long';
+
+  if (reason === 'pain') {
+    if (!zone) return { intro:"Une douleur, ce n'est pas une fatigue : on ne « passe pas au travers ». Dis-moi où, je te donne le bon réflexe." };
+    const z = {
+      knee:    { t:'Genou — prudence essuie-glace (ITBS)', c:"Très probable syndrome de l'essuie-glace après ton marathon trail. Règle simple : <b>zéro course tant que c'est douloureux à la descente d'escalier</b>. On garde la jambe active autrement — renfo moyen fessier + glace 10-15 min, et vélo/natation si indolore.", renfo:'glutes' },
+      calf:    { t:'Mollet — ta zone à surveiller',        c:"Mollet sensible = <b>pas de fractionné ni de côtes</b> aujourd'hui. Footing très court seulement si totalement indolore, sinon repos, étirements doux et hydratation.", renfo:'core' },
+      achilles:{ t:'Tendon d’Achille — à ne pas brusquer',  c:"Le tendon n'aime ni la vitesse ni les relances. <b>Stop l'intensité</b>, excentriques mollets légers, reprise seulement si plus de douleur à froid le matin.", renfo:'core' },
+      thigh:   { t:'Cuisse — surcharge musculaire',         c:"Quadris/ischios chargés après le trail. Footing souple court possible si la douleur s'efface en courant, sinon repos + mobilité. Pas de qualité aujourd'hui.", renfo:'legs' },
+      hip:     { t:'Hanche — chaîne fessiers',              c:"Souvent un déficit de gainage latéral/fessiers. Repos course conseillé + renfo hanches/fessiers ciblé pour reconstruire la stabilité avant de relancer le volume.", renfo:'glutes' },
+      foot:    { t:'Pied — on ne joue pas',                 c:"Repos, vérifie le chaussant, glace si point précis. Reprise progressive ; si ça persiste, avis pro (aponévrose plantaire).", renfo:'core' },
+      other:   { t:'Douleur — on lève le pied',             c:"Dans le doute, on protège : repos ou cross-training sans douleur aujourd'hui, et on réévalue demain à froid.", renfo:'glutes' },
+    }[zone];
+    const rlabel = `douleur ${(PAIN_ZONES.find(p => p.key === zone) || { lbl:zone }).lbl.toLowerCase()}`;
+    const opts = [ skip(rlabel) ];
+    if (z.renfo) opts.push({ label:`💪 Remplacer par renfo ${STRENGTH_FOCUS[z.renfo].short}`, action:`quickRenfo('${z.renfo}','${rlabel}',${wi},${origDay})` });
+    opts.push(moveBtn);
+    return { title:z.t, copy:`${z.c} <i>Douleur vive ou qui dure plus de 4-5 jours → avis kiné.</i>`, options:opts };
+  }
+
+  if (reason === 'fatigue') {
+    const deep = model.score < 58 || ['tired','sore'].includes(athleteFeeling);
+    return deep
+      ? { title:'Fatigue réelle — on récupère', copy:"Ton niveau de forme est bas : le gain du jour vient du repos, pas du forcing. Transforme en footing très court (30-40 min facile) ou repos complet.", options:[ adjust('fatigue'), skip('fatigue'), moveBtn ] }
+      : { title:'Coup de mou — test 10 minutes', copy:"Échauffe-toi 10 minutes très faciles. Si les jambes ne viennent pas, tu réduis ou tu rentres — souvent ça se débloque. Sinon allège sans culpabiliser.", options:[ adjust('fatigue'), moveBtn ] };
+  }
+
+  if (reason === 'time') {
+    const copy = isLong
+      ? "Sortie longue + peu de temps : mieux vaut la décaler que la bâcler. Si vraiment impossible, fais 60-70 % du volume à allure facile."
+      : isQuality
+        ? "Garde le cœur de séance, coupe l'échauffement long et le retour au calme. Version express : moitié du volume de qualité, ça reste utile."
+        : "Footing express 20-25 min : ça compte et ça entretient. Ne saute pas pour 20 minutes de moins.";
+    return { title:'Manque de temps — version maligne', copy, options:[ adjust('manque de temps'), moveBtn ] };
+  }
+
+  if (reason === 'weather') {
+    return { title:'Météo — plan B', copy:"Tapis de course (tu peux y caler l'allure cible), séance indoor, ou décale d'un jour. Sur sol glissant : pas de fractionné ni de descentes rapides.", options:[ moveBtn, adjust('météo') ] };
+  }
+
+  if (reason === 'travel') {
+    return { title:'Déplacement — rester actif simplement', copy:"Footing libre selon le temps et le spot sur place, ou renfo au poids du corps si tu ne peux pas courir. L'objectif : ne pas casser la régularité.", options:[ moveBtn, { label:'💪 Noter un renfo à la place', action:`quickRenfo('full','déplacement',${wi},${origDay})` }, skip('déplacement') ] };
+  }
+
+  return { title:'Adapter', copy:"Dis-moi ce qui coince et je te propose une alternative.", options:[ adjust('autre'), moveBtn ] };
+}
+
+function coachAdapt(wi, origDay, dayIdx, reason, zone) {
+  const session = weekSessions(wi).find(s => s.origDay === origDay) || { type:'rest' };
+  const model = dashboardModel();
+  const plan = adaptationPlan(session, reason, zone, model, wi, origDay, dayIdx);
+  document.querySelectorAll('.reason-btn').forEach(b => b.classList.toggle('active', b.dataset.reason === reason && !zone));
+  const box = document.getElementById('coach-adapt-result');
+  if (!box) return;
+  if (reason === 'pain' && !zone) {
+    box.innerHTML = `
+      <div class="adapt-card">
+        <div class="adapt-copy">${plan.intro}</div>
+        <div class="reprogram-label" style="margin-top:10px">Où as-tu mal ?</div>
+        <div class="reason-grid zone-grid">
+          ${PAIN_ZONES.map(p => `<button type="button" class="reason-btn" onclick="coachAdapt(${wi},${origDay},${dayIdx},'pain','${p.key}')">${p.emoji} ${p.lbl}</button>`).join('')}
+        </div>
+      </div>`;
+    return;
+  }
+  box.innerHTML = `
+    <div class="adapt-card">
+      <div class="adapt-title">${plan.title}</div>
+      <div class="adapt-copy">${plan.copy}</div>
+      <div class="adapt-actions">
+        ${plan.options.map(o => `<button type="button" class="adapt-action" onclick="${o.action}">${o.label}</button>`).join('')}
+      </div>
+    </div>`;
+}
+
+// Remplace la séance course par un renfo (et marque la course comme sautée)
+function quickRenfo(focus, reason, wi, origDay) {
+  const d = new Date().toISOString().slice(0, 10);
+  manualStrength.push({ id:`m-${Date.now()}-${Math.random().toString(16).slice(2)}`, d, name:'Renfo (coach)', min:0, focus, source:'manual' });
+  if (Number.isInteger(wi) && Number.isInteger(origDay)) {
+    const key = sessionKey(wi, origDay);
+    sessionLogs[key] = 'skipped';
+    if (reason) sessionLogReason[key] = reason;
+  }
+  saveAppState();
+  closeSessionDetail();
+  rerenderCurrentTab();
+  showToast(`Renfo ${STRENGTH_FOCUS[focus]?.short || ''} enregistré · séance course remplacée.`);
+}
+
 function openSessionDetail(weekIdx, dayIdx) {
   const week = PLAN[weekIdx];
   if (!week) return;
@@ -1739,7 +1884,21 @@ function openSessionDetail(weekIdx, dayIdx) {
     </div>`).join('');
 
   const isReal = session.type !== 'rest';
-  const movedNote = session.moved ? ` · déplacée (initial : ${DAYS_FR[origDay]})` : '';
+  const storedReason = sessionLogReason[sessionKey(weekIdx, origDay)];
+  const movedNote = (session.moved ? ` · déplacée (initial : ${DAYS_FR[origDay]})` : '')
+    + (storedReason ? ` · motif : ${escapeHtml(storedReason)}` : '');
+  const coachAdaptUI = isReal ? `
+      <div class="coach-adapt">
+        <div class="reprogram-label">${iconSvg('ai')}Besoin d'adapter ? Dis au coach pourquoi</div>
+        <div class="reason-grid">
+          <button type="button" class="reason-btn" data-reason="pain" onclick="coachAdapt(${weekIdx},${origDay},${dayIdx},'pain')">🤕 Douleur</button>
+          <button type="button" class="reason-btn" data-reason="fatigue" onclick="coachAdapt(${weekIdx},${origDay},${dayIdx},'fatigue')">😮‍💨 Fatigue</button>
+          <button type="button" class="reason-btn" data-reason="time" onclick="coachAdapt(${weekIdx},${origDay},${dayIdx},'time')">⏱️ Pas le temps</button>
+          <button type="button" class="reason-btn" data-reason="weather" onclick="coachAdapt(${weekIdx},${origDay},${dayIdx},'weather')">🌧️ Météo</button>
+          <button type="button" class="reason-btn" data-reason="travel" onclick="coachAdapt(${weekIdx},${origDay},${dayIdx},'travel')">✈️ Déplacement</button>
+        </div>
+        <div id="coach-adapt-result"></div>
+      </div>` : '';
   const reprogram = isReal ? `
       <div class="reprogram">
         <div class="reprogram-label">Reprogrammer — je la fais plutôt…</div>
@@ -1770,6 +1929,7 @@ function openSessionDetail(weekIdx, dayIdx) {
         </div>
       </div>
       <div class="session-blocks">${blocks}</div>
+      ${coachAdaptUI}
       ${reprogram}
       <div class="log-actions">
         <button class="log-btn done" type="button" onclick="setSessionLog(${weekIdx}, ${origDay}, 'done')">Validée</button>
@@ -1791,13 +1951,15 @@ function closeSessionDetail(e) {
   modal.innerHTML = '';
 }
 
-function setSessionLog(weekIdx, dayIdx, status) {
-  sessionLogs[sessionKey(weekIdx, dayIdx)] = status;
+function setSessionLog(weekIdx, origDay, status, reason) {
+  const key = sessionKey(weekIdx, origDay);
+  sessionLogs[key] = status;
+  if (reason) sessionLogReason[key] = reason; else delete sessionLogReason[key];
   saveAppState();
   closeSessionDetail();
   rerenderCurrentTab();
   const meta = sessionLogMeta(status);
-  if (meta) showToast(`Séance marquée « ${meta.label} ».`);
+  if (meta) showToast(`Séance marquée « ${meta.label} »${reason ? ` · ${reason}` : ''}.`);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1810,6 +1972,7 @@ let charts = {};
 let EVENTS = Array.isArray(INITIAL_STATE.events) ? INITIAL_STATE.events : [];
 let athleteFeeling = INITIAL_STATE.athleteFeeling || 'normal';
 let sessionLogs = INITIAL_STATE.sessionLogs && typeof INITIAL_STATE.sessionLogs === 'object' ? INITIAL_STATE.sessionLogs : {};
+let sessionLogReason = INITIAL_STATE.sessionLogReason && typeof INITIAL_STATE.sessionLogReason === 'object' ? INITIAL_STATE.sessionLogReason : {};
 let targetMinutes = Number.isFinite(INITIAL_STATE.targetMinutes) ? INITIAL_STATE.targetMinutes : 232;
 let athleteProfile = { ...DEFAULT_PROFILE, ...(INITIAL_STATE.athleteProfile || {}) };
 let stravaHistory = Array.isArray(INITIAL_STATE.stravaHistory) ? INITIAL_STATE.stravaHistory : [];
@@ -2502,6 +2665,7 @@ function renderStrengthSection() {
             ? `<span class="type-badge" style="background:${f.bg};color:${f.color}">${f.short}</span>`
             : `<span class="type-badge" style="background:#FEF2F2;color:#DC2626">à taguer</span>`}
         </div>
+        <div class="focus-hint">Type de renfo — tape pour taguer :</div>
         <div class="focus-row">${strengthFocusChips(s)}</div>
         ${s.source === 'manual'
           ? `<button type="button" class="strength-del" onclick="deleteManualStrength('${s.id}')">Supprimer</button>`
